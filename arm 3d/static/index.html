@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Real Industrial 3D Robotic Arm & Speed Verification Platform</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: "Segoe UI", system-ui, sans-serif; }
+    body { background: #080c14; color: #f1f5f9; display: flex; height: 100vh; overflow: hidden; }
+    
+    #panel {
+      width: 420px; height: 100vh; background: #0f172a; border-right: 1px solid #1e293b;
+      padding: 16px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; z-index: 10;
+    }
+    #viewport { flex: 1; height: 100vh; position: relative; }
+
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 10px; }
+    .metrics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; text-align: center; }
+    .metric-box { background: #0f172a; padding: 6px; border-radius: 6px; border: 1px solid #1e293b; }
+    .metric-val { font-size: 16px; font-weight: 700; color: #38bdf8; font-family: monospace; }
+    .metric-lbl { font-size: 11px; color: #94a3b8; text-transform: uppercase; }
+
+    .status-badge {
+      display: inline-block; padding: 5px 8px; border-radius: 4px; font-size: 11px; font-weight: bold;
+      text-align: center; width: 100%; margin-top: 5px;
+    }
+    .status-ok { background: #065f46; color: #34d399; border: 1px solid #059669; }
+    .status-warn { background: #7c2d12; color: #f87171; border: 1px solid #dc2626; }
+
+    .btn-row { display: flex; gap: 6px; }
+    button {
+      flex: 1; padding: 8px; background: #2563eb; color: #fff; border: none; border-radius: 6px;
+      font-weight: 600; cursor: pointer; font-size: 12px;
+    }
+    button:hover { background: #1d4ed8; }
+    button.exec { background: #10b981; }
+    button.exec:hover { background: #059669; }
+    button.sweep { background: #6366f1; }
+    button.sweep:hover { background: #4f46e5; }
+    button.upload-urdf { background: #0284c7; }
+    button.upload-urdf:hover { background: #0369a1; }
+    button.urdf { background: #d97706; }
+    button.urdf:hover { background: #b45309; }
+    button.alt { background: #334155; }
+    button.alt:hover { background: #475569; }
+    button.csv { background: #8b5cf6; }
+    button.danger { background: #ef4444; }
+
+    .link-item {
+      background: #182234; border: 1px solid #334155; padding: 8px; border-radius: 6px;
+      display: flex; flex-direction: column; gap: 3px; font-size: 11px;
+    }
+    .row { display: flex; justify-content: space-between; align-items: center; }
+    input[type="range"] { width: 100%; accent-color: #38bdf8; cursor: pointer; }
+    select {
+      width: 100%; padding: 6px; background: #1e293b; color: #f8fafc; border: 1px solid #334155; border-radius: 4px;
+    }
+
+    #table-wrap {
+      position: absolute; bottom: 12px; right: 12px; left: 432px; max-height: 200px;
+      overflow-y: auto; background: rgba(15, 23, 42, 0.95); border: 1px solid #334155;
+      border-radius: 8px; padding: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 11px; }
+    th, td { padding: 5px 8px; text-align: left; border-bottom: 1px solid #1e293b; }
+    th { color: #38bdf8; position: sticky; top: 0; background: #0f172a; }
+
+    #urdf-modal {
+      display: none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(0,0,0,0.75); z-index: 100; justify-content: center; align-items: center;
+    }
+    .modal-content {
+      background: #0f172a; border: 1px solid #334155; border-radius: 8px; width: 680px;
+      max-height: 85vh; display: flex; flex-direction: column; padding: 16px; gap: 10px;
+    }
+    textarea {
+      flex: 1; min-height: 360px; background: #080c14; color: #38bdf8; font-family: monospace;
+      padding: 10px; border: 1px solid #1e293b; border-radius: 4px; font-size: 11px; resize: none;
+    }
+  </style>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+
+  <div id="panel">
+    <h3>Kinematics & Speed Platform</h3>
+
+    <!-- Research Metrics HUD -->
+    <div class="card">
+      <div class="metrics-grid">
+        <div class="metric-box">
+          <div class="metric-lbl">Elapsed Time</div>
+          <div id="m-time" class="metric-val">0.00 s</div>
+        </div>
+        <div class="metric-box">
+          <div class="metric-lbl">Linear Speed</div>
+          <div id="m-speed" class="metric-val">0.00 u/s</div>
+        </div>
+        <div class="metric-box">
+          <div class="metric-lbl">Drawn Arc</div>
+          <div id="m-arc" class="metric-val">0.00 u</div>
+        </div>
+        <div class="metric-box">
+          <div class="metric-lbl">Reach</div>
+          <div id="m-reach" class="metric-val">0.00 u</div>
+        </div>
+      </div>
+      <div id="phys-status" class="status-badge status-ok">Arm Operational (Ready)</div>
+    </div>
+
+    <!-- User Custom URDF Upload Box -->
+    <div class="card" style="border: 1px dashed #38bdf8; background: #132238;">
+      <div class="row" style="margin-bottom: 6px;">
+        <strong style="font-size: 12px; color: #38bdf8;">📂 Test Custom Arm (URDF)</strong>
+      </div>
+      <input type="file" id="urdf-input" accept=".urdf,.xml" style="font-size: 11px; color:#cbd5e1; width:100%; margin-bottom:6px;">
+      <button class="upload-urdf" onclick="uploadUserURDF()">Upload & Inspect Arm</button>
+    </div>
+
+    <!-- Live Joint Angles -->
+    <div class="card" style="font-size: 11px;">
+      <strong style="color: #38bdf8;">URDF Revolute Joint Angles (rad)</strong>
+      <div class="row" style="margin-top:4px;"><span>q0 (Waist):</span><span id="ang-q0" style="font-family:monospace;">0.0000</span></div>
+      <div class="row"><span>q1 (Shoulder):</span><span id="ang-q1" style="font-family:monospace;">0.0000</span></div>
+      <div class="row"><span>q2 (Elbow):</span><span id="ang-q2" style="font-family:monospace;">0.0000</span></div>
+    </div>
+
+    <div class="row">
+      <strong>Links (<span id="link-count-lbl">3</span>)</strong>
+      <div class="btn-row" style="flex: 0 0 140px;">
+        <button class="alt" onclick="addLink()">+ Link</button>
+        <button class="alt" onclick="removeLink()">- Link</button>
+      </div>
+    </div>
+    <div id="links-ui" style="display: flex; flex-direction: column; gap: 6px;"></div>
+
+    <hr style="border: 0.5px solid #1e293b;" />
+
+    <div>
+      <label style="font-size: 11px;">Trajectory:</label>
+      <select id="shape-opt">
+        <option value="star">3D Star</option>
+        <option value="square">3D Square</option>
+        <option value="circle">3D Circle</option>
+        <option value="helix">3D Helix (Spiral)</option>
+        <option value="lissajous">3D Lissajous Curve</option>
+      </select>
+    </div>
+
+    <div>
+      <div class="row" style="font-size: 11px;">
+        <span>Motor Speed (&omega;):</span>
+        <span id="speed-lbl">90 deg/s</span>
+      </div>
+      <input type="range" id="motor-spd" min="30" max="360" value="90" oninput="document.getElementById('speed-lbl').textContent = this.value + ' deg/s'">
+    </div>
+
+    <button id="run-btn" class="exec" onclick="startTrajectoryTest()">▶ Execute Experiment & Record</button>
+    
+    <!-- Matrix Speed Comparison Runner -->
+    <button class="sweep" onclick="runAutomatedSpeedMatrix()">⚡ Run Speed Comparison Matrix (Auto-Sweep)</button>
+
+    <div class="btn-row">
+      <button class="urdf" onclick="openURDFModal()">View URDF</button>
+      <button class="csv" onclick="exportToCSV()">Export CSV</button>
+      <button class="danger" onclick="clearAll()">Reset</button>
+    </div>
+  </div>
+
+  <div id="viewport">
+    <div id="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Shape</th>
+            <th>Links</th>
+            <th>Lengths</th>
+            <th>Reach</th>
+            <th>Motor Spd</th>
+            <th>Arc Length</th>
+            <th>Time</th>
+            <th>Linear Speed</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="log-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="urdf-modal">
+    <div class="modal-content">
+      <div class="row">
+        <strong>Exported URDF Robot Model (ROS/Gazebo Compatible)</strong>
+        <button class="danger" style="max-width: 50px; padding: 4px;" onclick="closeURDFModal()">X</button>
+      </div>
+      <textarea id="urdf-text" readonly></textarea>
+      <div class="btn-row">
+        <button class="exec" onclick="downloadURDFFile()">Download .urdf File</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let links = [
+      { length: 3.0, yaw: 0, pitch: 0 },
+      { length: 2.5, yaw: 0, pitch: 0 },
+      { length: 1.5, yaw: 0, pitch: 0 }
+    ];
+
+    let currentURDF = "";
+    let testCounter = 1;
+    let logHistory = [];
+
+    const container = document.getElementById("viewport");
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x080c14);
+
+    const camera = new THREE.PerspectiveCamera(45, (window.innerWidth - 420) / window.innerHeight, 0.1, 1000);
+    camera.position.set(10, 11, 13);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth - 420, window.innerHeight);
+    container.appendChild(renderer.domElement);
+
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 0.9);
+    dirLight.position.set(12, 20, 15);
+    scene.add(dirLight);
+
+    scene.add(new THREE.GridHelper(24, 24, 0x0284c7, 0x1e293b));
+
+    const paper = new THREE.Mesh(
+      new THREE.PlaneGeometry(12, 12),
+      new THREE.MeshBasicMaterial({ color: 0x0f172a, side: THREE.DoubleSide })
+    );
+    paper.rotation.x = -Math.PI / 2;
+    paper.position.y = 0.005;
+    scene.add(paper);
+
+    const baseAssembly = new THREE.Group();
+    const basePlate = new THREE.Mesh(
+      new THREE.CylinderGeometry(1.35, 1.45, 0.15, 32),
+      new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.9, roughness: 0.3 })
+    );
+    basePlate.position.y = 0.075;
+    baseAssembly.add(basePlate);
+
+    const waistTurret = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.85, 1.1, 0.35, 32),
+      new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.7, roughness: 0.4 })
+    );
+    waistTurret.position.y = 0.25;
+    baseAssembly.add(waistTurret);
+
+    const hubRing = new THREE.Mesh(
+      new THREE.TorusGeometry(0.75, 0.05, 16, 32),
+      new THREE.MeshStandardMaterial({ color: 0x0284c7, metalness: 0.6 })
+    );
+    hubRing.rotation.x = Math.PI / 2;
+    hubRing.position.y = 0.42;
+    baseAssembly.add(hubRing);
+    scene.add(baseAssembly);
+
+    const armGroup = new THREE.Group();
+    scene.add(armGroup);
+
+    const trailSegmentsGroup = new THREE.Group();
+    scene.add(trailSegmentsGroup);
+
+    let currentTrailLine = null;
+    let currentTrailPoints = [];
+    let animTimer = null;
+    let clockTimer = null;
+
+    const matMotorBody = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.85, roughness: 0.25 });
+    const matMotorCap = new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.9, roughness: 0.2 });
+    const matArmLink = new THREE.MeshStandardMaterial({ color: 0x0284c7, metalness: 0.4, roughness: 0.35 });
+    const matArmAccent = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.7, roughness: 0.4 });
+    const matJointShaft = new THREE.MeshStandardMaterial({ color: 0x94a3b8, metalness: 0.9, roughness: 0.15 });
+
+    function createMotorAssembly() {
+      const motorGroup = new THREE.Group();
+      const housing = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 0.45, 24), matMotorBody);
+      housing.rotation.z = Math.PI / 2;
+      motorGroup.add(housing);
+
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 0.48, 24), matMotorCap);
+      cap.rotation.z = Math.PI / 2;
+      motorGroup.add(cap);
+
+      const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.54, 16), matJointShaft);
+      shaft.rotation.z = Math.PI / 2;
+      motorGroup.add(shaft);
+
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.03, 12, 24), matArmAccent);
+      ring.rotation.y = Math.PI / 2;
+      motorGroup.add(ring);
+
+      return motorGroup;
+    }
+
+    function renderArm(joints, isDrawing) {
+      while (armGroup.children.length > 0) armGroup.remove(armGroup.children[0]);
+
+      for (let i = 0; i < joints.length - 1; i++) {
+        const p1 = new THREE.Vector3(joints[i].x, joints[i].y, joints[i].z);
+        const p2 = new THREE.Vector3(joints[i + 1].x, joints[i + 1].y, joints[i + 1].z);
+        const dist = p1.distanceTo(p2);
+        const dir = p2.clone().sub(p1).normalize();
+        const midPoint = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
+
+        const motor = createMotorAssembly();
+        motor.position.copy(p1);
+        const rotAxis = new THREE.Vector3(0, 1, 0).cross(dir);
+        if (rotAxis.lengthSq() > 0.001) {
+          motor.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), rotAxis.normalize());
+        }
+        armGroup.add(motor);
+
+        const linkGroup = new THREE.Group();
+        const beamMesh = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.16, 0.19, dist * 0.82, 16),
+          i % 2 === 0 ? matArmLink : matArmAccent
+        );
+        linkGroup.add(beamMesh);
+
+        const ribMesh = new THREE.Mesh(new THREE.BoxGeometry(0.08, dist * 0.75, 0.28), matMotorBody);
+        linkGroup.add(ribMesh);
+
+        linkGroup.position.copy(midPoint);
+        linkGroup.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+        armGroup.add(linkGroup);
+      }
+
+      const tipPos = joints[joints.length - 1];
+      const prevPos = joints[joints.length - 2];
+      const tipDir = new THREE.Vector3(tipPos.x - prevPos.x, tipPos.y - prevPos.y, tipPos.z - prevPos.z).normalize();
+
+      const toolGroup = new THREE.Group();
+      const collar = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.14, 0.25, 16), matMotorBody);
+      toolGroup.add(collar);
+
+      const nozzle = new THREE.Mesh(
+        new THREE.ConeGeometry(0.12, 0.35, 16),
+        new THREE.MeshStandardMaterial({ color: 0xd97706, metalness: 0.9, roughness: 0.3 })
+      );
+      nozzle.position.y = -0.18;
+      nozzle.rotation.x = Math.PI;
+      toolGroup.add(nozzle);
+
+      const tipColor = isDrawing ? 0xef4444 : 0xfacc15;
+      const stylus = new THREE.Mesh(
+        new THREE.SphereGeometry(0.08, 16, 16),
+        new THREE.MeshStandardMaterial({ color: tipColor, emissive: tipColor, emissiveIntensity: isDrawing ? 0.9 : 0.2 })
+      );
+      stylus.position.y = -0.36;
+      toolGroup.add(stylus);
+
+      toolGroup.position.set(tipPos.x, tipPos.y, tipPos.z);
+      toolGroup.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), tipDir);
+      armGroup.add(toolGroup);
+    }
+
+    async function uploadUserURDF() {
+      const input = document.getElementById("urdf-input");
+      if (!input.files || input.files.length === 0) return alert("Select a .urdf file first!");
+
+      const formData = new FormData();
+      formData.append("file", input.files[0]);
+
+      try {
+        const res = await fetch("/api/arm/parse-urdf", { method: "POST", body: formData });
+        const data = await res.json();
+        if (data.status === "error") return alert("Error: " + data.message);
+
+        links = data.link_lengths.map(len => ({ length: len, yaw: 0, pitch: 0 }));
+        currentURDF = data.urdf_xml;
+        updateUI();
+        callTrajPreview();
+
+        document.getElementById("phys-status").className = "status-badge status-ok";
+        document.getElementById("phys-status").textContent = `Arm Loaded: ${data.robot_name} (${data.link_count} Links)`;
+        alert(`Loaded ${data.robot_name}!\nLinks: ${data.link_count}\nReach: ${data.total_reach} units`);
+      } catch (e) {
+        alert("Upload error: " + e.message);
+      }
+    }
+
+    // Automated Matrix Speed Comparison for Research Paper
+    async function runAutomatedSpeedMatrix() {
+      const shape = document.getElementById("shape-opt").value;
+      const currentLengths = links.map(l => l.length);
+      
+      // Compare current robot against standard research variants across multiple motor speeds
+      const testConfigs = [
+        currentLengths,
+        [2.5, 2.5, 2.5],     // Equal length distribution
+        [4.0, 2.0, 1.0],     // Proximal-heavy (long shoulder)
+        [1.5, 2.5, 3.5]      // Distal-heavy (long forearm)
+      ];
+      const testSpeeds = [45.0, 90.0, 180.0];
+
+      document.getElementById("phys-status").textContent = "Running Matrix Speed Verification...";
+      const res = await fetch("/api/arm/verify-matrix", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shape: shape,
+          link_configurations: testConfigs,
+          motor_speeds: testSpeeds
+        })
+      });
+      const data = await res.json();
+
+      data.matrix_results.forEach(item => {
+        logHistory.push({
+          test_id: `SWEEP-${testCounter++}`,
+          ...item
+        });
+      });
+
+      renderTable();
+      document.getElementById("phys-status").textContent = `Speed Matrix Complete (${data.total_runs} Configs Verified)`;
+      alert(`Completed speed verification across ${data.total_runs} link and speed combinations! Export CSV to analyze.`);
+    }
+
+    function updateUI() {
+      const parent = document.getElementById("links-ui");
+      parent.innerHTML = "";
+      document.getElementById("link-count-lbl").textContent = links.length;
+
+      let reach = 0;
+      links.forEach((l, i) => {
+        reach += l.length;
+        const box = document.createElement("div");
+        box.className = "link-item";
+        box.innerHTML = `
+          <div class="row"><strong>Link ${i + 1}</strong> <span>L = ${l.length}</span></div>
+          <input type="range" min="1" max="6" step="0.5" value="${l.length}" oninput="editLink(${i}, this.value)">
+        `;
+        parent.appendChild(box);
+      });
+
+      document.getElementById("m-reach").textContent = reach.toFixed(1) + " u";
+    }
+
+    function editLink(idx, val) {
+      links[idx].length = parseFloat(val);
+      updateUI();
+      callTrajPreview();
+    }
+
+    function addLink() {
+      if (links.length < 8) {
+        links.push({ length: 1.5, yaw: 0, pitch: 0 });
+        updateUI();
+        callTrajPreview();
+      }
+    }
+
+    function removeLink() {
+      if (links.length > 2) {
+        links.pop();
+        updateUI();
+        callTrajPreview();
+      }
+    }
+
+    async function callTrajPreview() {
+      const res = await fetch("/api/arm/trajectory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shape: "star", links, motor_speed_dps: 90, num_samples: 10 })
+      });
+      const data = await res.json();
+      currentURDF = data.urdf_xml;
+      renderArm(data.frames[0].joints, true);
+      updateAnglesHUD(data.frames[0].angles);
+    }
+
+    function updateAnglesHUD(angles) {
+      if (!angles) return;
+      document.getElementById("ang-q0").textContent = (angles.joint_waist || 0).toFixed(4);
+      document.getElementById("ang-q1").textContent = (angles.joint_shoulder || 0).toFixed(4);
+      document.getElementById("ang-q2").textContent = (angles.joint_elbow || 0).toFixed(4);
+    }
+
+    async function startTrajectoryTest() {
+      clearInterval(animTimer);
+      clearInterval(clockTimer);
+      clearTrail();
+
+      const shape = document.getElementById("shape-opt").value;
+      const motorSpeed = parseFloat(document.getElementById("motor-spd").value);
+      const runBtn = document.getElementById("run-btn");
+      const statusBadge = document.getElementById("phys-status");
+
+      runBtn.disabled = true;
+
+      const res = await fetch("/api/arm/trajectory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shape, links, motor_speed_dps: motorSpeed, num_samples: 140 })
+      });
+      const data = await res.json();
+      currentURDF = data.urdf_xml;
+      const frames = data.frames;
+      const arcLength = data.arc_length;
+      const stepDelay = data.step_delay_ms;
+
+      document.getElementById("m-arc").textContent = arcLength.toFixed(2) + " u";
+
+      let idx = 0;
+      let hadStall = false;
+      const startTime = performance.now();
+
+      clockTimer = setInterval(() => {
+        const elapsed = (performance.now() - startTime) / 1000;
+        document.getElementById("m-time").textContent = elapsed.toFixed(2) + " s";
+        if (elapsed > 0) {
+          const currentLinearSpeed = ((idx / frames.length) * arcLength) / elapsed;
+          document.getElementById("m-speed").textContent = currentLinearSpeed.toFixed(2) + " u/s";
+        }
+      }, 50);
+
+      animTimer = setInterval(async () => {
+        if (idx >= frames.length) {
+          clearInterval(animTimer);
+          clearInterval(clockTimer);
+
+          const finalTime = parseFloat(((performance.now() - startTime) / 1000).toFixed(2));
+          const avgLinearSpeed = parseFloat((arcLength / finalTime).toFixed(2));
+
+          document.getElementById("m-time").textContent = finalTime.toFixed(2) + " s";
+          document.getElementById("m-speed").textContent = avgLinearSpeed.toFixed(2) + " u/s";
+          runBtn.disabled = false;
+
+          statusBadge.className = hadStall ? "status-badge status-warn" : "status-badge status-ok";
+          statusBadge.textContent = hadStall ? "Completed with Reachability Limits / Lift" : "Trajectory Executed: Nominal";
+
+          const reach = links.reduce((a, b) => a + b.length, 0);
+          const lengthsStr = links.map(l => l.length).join("-");
+
+          const logItem = {
+            test_id: `EXP-${testCounter++}`,
+            shape: shape.toUpperCase(),
+            link_count: links.length,
+            link_lengths: lengthsStr,
+            total_reach: reach,
+            motor_speed_dps: motorSpeed,
+            arc_length: arcLength,
+            elapsed_time_sec: finalTime,
+            avg_linear_speed: avgLinearSpeed,
+            avg_angular_speed: motorSpeed,
+            status: hadStall ? "STALLED / GAP" : "NOMINAL"
+          };
+
+          await fetch("/api/arm/log", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(logItem)
+          });
+
+          logHistory.push(logItem);
+          renderTable();
+          return;
+        }
+
+        const f = frames[idx];
+        const canDraw = f.can_draw;
+        renderArm(f.joints, canDraw);
+        updateAnglesHUD(f.angles);
+
+        if (!f.is_reachable) {
+          hadStall = true;
+          statusBadge.className = "status-badge status-warn";
+          statusBadge.textContent = "Warning: Out of Reach (Pen Lifted)";
+        } else {
+          statusBadge.className = "status-badge status-ok";
+          statusBadge.textContent = "Status: Tracking & Drawing on Surface";
+        }
+
+        const tip = f.joints[f.joints.length - 1];
+        if (canDraw) {
+          if (!currentTrailLine) {
+            currentTrailPoints = [tip.x, tip.y, tip.z];
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(currentTrailPoints, 3));
+            currentTrailLine = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xef4444, linewidth: 3 }));
+            trailSegmentsGroup.add(currentTrailLine);
+          } else {
+            currentTrailPoints.push(tip.x, tip.y, tip.z);
+            currentTrailLine.geometry.dispose();
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(currentTrailPoints, 3));
+            currentTrailLine.geometry = geo;
+          }
+        } else {
+          currentTrailLine = null;
+          currentTrailPoints = [];
+        }
+
+        idx++;
+      }, stepDelay);
+    }
+
+    function renderTable() {
+      const tbody = document.getElementById("log-body");
+      tbody.innerHTML = "";
+      logHistory.slice().reverse().forEach(row => {
+        const tr = document.createElement("tr");
+        const statusColor = row.status === "NOMINAL" ? "#34d399" : "#f87171";
+        tr.innerHTML = `
+          <td>${row.test_id}</td>
+          <td><strong>${row.shape}</strong></td>
+          <td>${row.link_count}</td>
+          <td>${row.link_lengths}</td>
+          <td>${row.total_reach} u</td>
+          <td>${row.motor_speed_dps}&deg;/s</td>
+          <td>${row.arc_length} u</td>
+          <td style="color:#38bdf8; font-weight:bold;">${row.elapsed_time_sec} s</td>
+          <td>${row.avg_linear_speed} u/s</td>
+          <td style="color:${statusColor}; font-weight:bold;">${row.status}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function openURDFModal() {
+      document.getElementById("urdf-text").value = currentURDF;
+      document.getElementById("urdf-modal").style.display = "flex";
+    }
+
+    function closeURDFModal() {
+      document.getElementById("urdf-modal").style.display = "none";
+    }
+
+    function downloadURDFFile() {
+      const blob = new Blob([currentURDF], { type: "application/xml" });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `robot_arm_${Date.now()}.urdf`;
+      a.click();
+    }
+
+    function exportToCSV() {
+      if (logHistory.length === 0) return alert("No experiments recorded yet.");
+      const headers = ["Test_ID", "Shape", "Link_Count", "Link_Lengths", "Total_Reach", "Motor_Speed_DPS", "Arc_Length", "Elapsed_Time_Sec", "Avg_Linear_Speed_UPS", "Physical_Status"];
+      const csvRows = [headers.join(",")];
+      logHistory.forEach(r => {
+        csvRows.push([
+          r.test_id, r.shape, r.link_count, `"${r.link_lengths}"`, r.total_reach, r.motor_speed_dps, r.arc_length, r.elapsed_time_sec, r.avg_linear_speed, r.status
+        ].join(","));
+      });
+      const blob = new Blob([csvRows.join("\n")], { type: "text/csv" });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `robotic_arm_speed_verification_${Date.now()}.csv`;
+      a.click();
+    }
+
+    function clearTrail() {
+      while(trailSegmentsGroup.children.length > 0) {
+        const child = trailSegmentsGroup.children[0];
+        if (child.geometry) child.geometry.dispose();
+        trailSegmentsGroup.remove(child);
+      }
+      currentTrailLine = null;
+      currentTrailPoints = [];
+    }
+
+    function clearAll() {
+      clearTrail();
+      logHistory = [];
+      renderTable();
+      document.getElementById("m-time").textContent = "0.00 s";
+      document.getElementById("m-speed").textContent = "0.00 u/s";
+      document.getElementById("m-arc").textContent = "0.00 u";
+      document.getElementById("phys-status").className = "status-badge status-ok";
+      document.getElementById("phys-status").textContent = "Arm Operational (Ready)";
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    window.addEventListener("resize", () => {
+      camera.aspect = (window.innerWidth - 420) / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth - 420, window.innerHeight);
+    });
+
+    updateUI();
+    callTrajPreview();
+    animate();
+  </script>
+</body>
+</html>
